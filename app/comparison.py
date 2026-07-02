@@ -1,6 +1,8 @@
 import json
+import re
+import requests
 from typing import List, Dict, Any
-from app.config import CATALOG_PATH
+from app.config import CATALOG_PATH, GEMINI_API_KEY
 from app.retriever import Retriever
 
 # Load catalog for details
@@ -10,84 +12,89 @@ try:
 except Exception:
     catalog = []
 
-def compare_assessments(query: str) -> dict:
-    """
-    Compare assessments mentioned or retrieved for the query.
-    Generates a structured markdown table comparing their features.
-    """
-    # 1. Retrieve the top 3 candidates relevant to the query
-    retriever = Retriever(k=3)
-    candidates = retriever.get_results(query)
-    
-    if len(candidates) < 2:
-        # If we got fewer than 2 from semantic search, let's try to find more items in catalog
-        # by checking if keywords match
-        query_words = [w.lower() for w in query.split() if len(w) > 2]
-        extra_candidates = []
-        for item in catalog:
-            if item in candidates:
-                continue
-            name_lower = item.get("name", "").lower()
-            if any(word in name_lower for word in query_words):
-                extra_candidates.append(item)
-                if len(candidates) + len(extra_candidates) >= 3:
-                    break
-        candidates.extend(extra_candidates)
+def get_catalog(item_name_or_query: str) -> dict | None:
+    """Helper to fetch a single matching catalog item using semantic search."""
+    if not item_name_or_query:
+        return None
+    retriever = Retriever(k=1)
+    results = retriever.get_results(item_name_or_query)
+    return results[0] if results else None
 
-    if not candidates:
-        return {
-            "reply": "I couldn't find any assessments matching your query to compare.",
-            "recommendations": [],
-            "end_of_conversation": False
-        }
+def llm_compare(assessment_a: dict, assessment_b: dict) -> str:
+    """
+    Call Google Gemini API to generate a side-by-side comparison table.
+    Falls back to generating a static table on failure.
+    """
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY not configured")
         
-    if len(candidates) == 1:
-        # Compare with similar items in catalog or just present the one
-        # Let's find one more related item to compare against
-        single_item = candidates[0]
-        extra_candidates = [item for item in catalog if item.get("entity_id") != single_item.get("entity_id")][:1]
-        candidates.extend(extra_candidates)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    headers = {"Content-Type": "application/json"}
+    
+    prompt = f"""
+Compare the following two SHL assessments:
 
-    # 2. Build comparison details
+Assessment A:
+Name: {assessment_a.get('name')}
+Job Levels: {assessment_a.get('job_levels')}
+Duration: {assessment_a.get('duration')}
+Adaptive: {assessment_a.get('adaptive')}
+Keys/Categories: {assessment_a.get('keys')}
+Description: {assessment_a.get('description')}
+
+Assessment B:
+Name: {assessment_b.get('name')}
+Job Levels: {assessment_b.get('job_levels')}
+Duration: {assessment_b.get('duration')}
+Adaptive: {assessment_b.get('adaptive')}
+Keys/Categories: {assessment_b.get('keys')}
+Description: {assessment_b.get('description')}
+
+Please provide a side-by-side comparison table in markdown with columns "Feature", "{assessment_a.get('name')}", "{assessment_b.get('name')}".
+Keep the table formatting professional, clean, and complete, using the details provided.
+Add a short, 1-2 sentence concluding recommendation of when to use which. Do not include any introductory conversation.
+"""
+
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ]
+    }
+    
+    response = requests.post(url, headers=headers, json=payload, timeout=10)
+    response.raise_for_status()
+    data = response.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
+
+def generate_static_comparison(candidates: List[dict]) -> str:
+    """Fallback generator for static comparison table."""
     reply_parts = []
     reply_parts.append(f"Here is a comparison of the relevant assessments I found for your request:\n")
     
-    # Markdown Table Headers
     header = "| Feature | " + " | ".join(c.get("name", "Unknown") for c in candidates) + " |"
     divider = "| :--- | " + " | ".join(":---" for _ in candidates) + " |"
     reply_parts.append(header)
     reply_parts.append(divider)
     
-    # Compare Job Levels
-    job_levels_row = "| **Job Levels** | " + " | ".join(
-        ", ".join(c.get("job_levels", [])) or "Not Specified" for c in candidates
-    ) + " |"
+    job_levels_row = "| **Job Levels** | " + " | ".join(", ".join(c.get("job_levels", [])) or "Not Specified" for c in candidates) + " |"
     reply_parts.append(job_levels_row)
     
-    # Compare Duration
-    duration_row = "| **Duration** | " + " | ".join(
-        c.get("duration") or "Not Specified" for c in candidates
-    ) + " |"
+    duration_row = "| **Duration** | " + " | ".join(c.get("duration") or "Not Specified" for c in candidates) + " |"
     reply_parts.append(duration_row)
     
-    # Compare Adaptive
-    adaptive_row = "| **Adaptive** | " + " | ".join(
-        ("Yes" if c.get("adaptive") == "yes" else "No") for c in candidates
-    ) + " |"
+    adaptive_row = "| **Adaptive** | " + " | ".join(("Yes" if c.get("adaptive") == "yes" else "No") for c in candidates) + " |"
     reply_parts.append(adaptive_row)
     
-    # Compare Focus Keys
-    keys_row = "| **Key Focus Areas** | " + " | ".join(
-        ", ".join(c.get("keys", [])) or "Not Specified" for c in candidates
-    ) + " |"
+    keys_row = "| **Key Focus Areas** | " + " | ".join(", ".join(c.get("keys", [])) or "Not Specified" for c in candidates) + " |"
     reply_parts.append(keys_row)
     
-    # Compare Description
-    # Truncate description to first 150 chars or first sentence for compactness
     short_descriptions = []
     for c in candidates:
         desc = c.get("description", "No description available.")
-        # Try to take the first sentence
         first_sentence = desc.split(". ")[0]
         if not first_sentence.endswith("."):
             first_sentence += "."
@@ -98,17 +105,64 @@ def compare_assessments(query: str) -> dict:
     description_row = "| **Description** | " + " | ".join(short_descriptions) + " |"
     reply_parts.append(description_row)
     
-    # 3. Format response recommendations list
-    recommendations = []
-    for c in candidates:
-        recommendations.append({
-            "name": c.get("name", ""),
-            "url": c.get("link", c.get("url", "")),
-            "test_type": "compare"
-        })
+    return "\n".join(reply_parts)
+
+def compare_assessments(query: str) -> dict:
+    """
+    Compare assessments mentioned or retrieved for the query using either
+    the dynamic LLM comparator or the static table fallback.
+    """
+    # 1. Parse two potential targets
+    q = query.lower()
+    for word in ["compare", "difference between", "difference", "versus", "comparison of", "comparison"]:
+        q = q.replace(word, "")
+        
+    parts = []
+    if "vs" in q:
+        parts = [p.strip() for p in q.split("vs")]
+    elif "and" in q:
+        parts = [p.strip() for p in q.split("and")]
+        
+    assessment_a = None
+    assessment_b = None
+    
+    if len(parts) >= 2:
+        assessment_a = get_catalog(parts[0])
+        assessment_b = get_catalog(parts[1])
+        
+    # 2. Fallback to semantic search for top 2 candidates if parsing failed
+    if not assessment_a or not assessment_b:
+        retriever = Retriever(k=2)
+        candidates = retriever.get_results(query)
+        if len(candidates) >= 2:
+            assessment_a = candidates[0]
+            assessment_b = candidates[1]
+            
+    if not assessment_a:
+        return {
+            "reply": "I couldn't find any assessments matching your query to compare.",
+            "recommendations": [],
+            "end_of_conversation": False
+        }
+        
+    # If we only have one candidate, select a related one from the catalog to compare against
+    if not assessment_b:
+        assessment_b = [item for item in catalog if item.get("entity_id") != assessment_a.get("entity_id")][0]
+        
+    # 3. Perform comparison
+    recommendations = [
+        {"name": assessment_a.get("name", ""), "url": assessment_a.get("link", ""), "test_type": "compare"},
+        {"name": assessment_b.get("name", ""), "url": assessment_b.get("link", ""), "test_type": "compare"}
+    ]
+    
+    try:
+        reply_text = llm_compare(assessment_a, assessment_b)
+    except Exception:
+        # Fallback to static table
+        reply_text = generate_static_comparison([assessment_a, assessment_b])
         
     return {
-        "reply": "\n".join(reply_parts),
+        "reply": reply_text,
         "recommendations": recommendations,
         "end_of_conversation": False
     }
