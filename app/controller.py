@@ -35,14 +35,19 @@ def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     if should_refuse(last_message):
         return get_refusal_response()
         
-    # 2. Detect Intent and Extract Entities
+    # 2. Detect Intent and Extract Entities (with multi-turn context carry-over)
+    combined_user_content = " ".join(
+        msg["content"] for msg in messages if msg["role"] == "user"
+    )
+    
     intent_res = detect_intent(last_message)
     intent_type = intent_res.intent
     
+    entities_res = detect_intent(combined_user_content)
     parsed_entities = {
-        "role": intent_res.role,
-        "skills": intent_res.skills,
-        "experience": intent_res.experience
+        "role": entities_res.role,
+        "skills": entities_res.skills,
+        "experience": entities_res.experience
     }
     
     # 3. Router
