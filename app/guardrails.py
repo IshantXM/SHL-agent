@@ -13,12 +13,16 @@ REJECTION_KEYWORDS = {
     "general_hiring_advice": [
         "how to hire", "hiring process", "interview strategy", "onboard", 
         "onboarding", "retain", "retention", "recruit talent", "headcount", 
-        "workplace culture", "how to write a job description"
+        "workplace culture", "how to write a job description",
+        "should i learn", "how to prepare"
     ],
     "non_shl_requests": [
         "hackerrank", "leetcode", "codility", "testdome", "codewars", 
         "weather", "movie", "politics", "sports", "cricket", "football", 
-        "recipe", "song", "joke", "history", "news", "music"
+        "recipe", "song", "joke", "history", "news", "music",
+        "aws certification", "azure certification", "gcp certification",
+        "certification", "visa", "resume", "college", "university",
+        "stocks", "crypto", "exam", "course", "udemy", "coursera"
     ]
 }
 
@@ -67,7 +71,7 @@ def should_refuse(query: str) -> bool:
 def get_refusal_response() -> dict:
     """Get the standard refusal response dictionary."""
     return {
-        "reply": "I can only discuss SHL assessments. I cannot provide legal advice, salary information, general hiring advice, or answer non-SHL related questions.",
+        "reply": "I can only discuss SHL assessments contained within the SHL catalog and cannot provide recommendations for external certifications.",
         "recommendations": [],
         "end_of_conversation": True
     }

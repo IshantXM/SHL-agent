@@ -20,10 +20,31 @@ def get_catalog(item_name_or_query: str) -> dict | None:
     results = retriever.get_results(item_name_or_query)
     return results[0] if results else None
 
+def sanitize_reply(text: str) -> str:
+    """Strip markdown artifacts (tables, bold, bullets, code fences) from LLM output."""
+    # Remove code fences
+    text = re.sub(r'```.*?```', '', text, flags=re.DOTALL)
+    # Remove markdown table pipes and dividers
+    text = re.sub(r'\|+', '', text)
+    # Remove markdown bold/italic asterisks
+    text = re.sub(r'\*+', '', text)
+    # Remove markdown heading markers
+    text = re.sub(r'#+\s*', '', text)
+    # Remove markdown bullet markers
+    text = re.sub(r'^\s*[-•]\s+', '', text, flags=re.MULTILINE)
+    # Remove markdown numbered list markers
+    text = re.sub(r'^\s*\d+\.\s+', '', text, flags=re.MULTILINE)
+    # Collapse multiple newlines into single spaces for a paragraph feel
+    text = re.sub(r'\n{2,}', '\n\n', text)
+    # Collapse remaining single newlines into spaces (for table row remnants)
+    text = re.sub(r'\s*\n\s*', ' ', text)
+    # Collapse multiple spaces
+    text = re.sub(r' {2,}', ' ', text)
+    return text.strip()
+
 def llm_compare(assessment_a: dict, assessment_b: dict) -> str:
     """
-    Call Google Gemini API to generate a side-by-side comparison table.
-    Falls back to generating a static table on failure.
+    Call Google Gemini API to generate a conversational plain-text comparison.
     """
     if not GEMINI_API_KEY:
         raise ValueError("GEMINI_API_KEY not configured")
@@ -31,8 +52,7 @@ def llm_compare(assessment_a: dict, assessment_b: dict) -> str:
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     headers = {"Content-Type": "application/json"}
     
-    prompt = f"""
-Compare the following two SHL assessments ONLY using the supplied catalog data. Do not invent any facts.
+    prompt = f"""Compare the following two SHL assessments.
 
 Assessment A:
 Name: {assessment_a.get('name')}
@@ -50,15 +70,15 @@ Adaptive: {assessment_b.get('adaptive')}
 Keys/Categories: {assessment_b.get('keys')}
 Description: {assessment_b.get('description')}
 
-Please provide a side-by-side comparison table in markdown with columns "Feature", "{assessment_a.get('name')}", "{assessment_b.get('name')}".
-Compare these features:
-- Purpose
-- Skills measured
-- Target roles
-- Duration
-- Use cases
-
-Do not include any introductory conversation.
+Instructions:
+- Compare ONLY using catalog information.
+- Explain: Purpose, Skills measured, Target roles, and Duration.
+- Do not speculate.
+- Do not provide hiring advice.
+- Do not mention using assessments together unless explicitly stated in the catalog.
+- Respond in plain text only.
+- Do NOT use markdown symbols, bullet points, asterisks, tables, or pipe characters.
+- Maximum 120 words total.
 """
 
     payload = {
@@ -74,44 +94,48 @@ Do not include any introductory conversation.
     response = requests.post(url, headers=headers, json=payload, timeout=10)
     response.raise_for_status()
     data = response.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"]
+    raw = data["candidates"][0]["content"]["parts"][0]["text"]
+    return sanitize_reply(raw)
 
 def generate_static_comparison(candidates: List[dict]) -> str:
-    """Fallback generator for static comparison table."""
-    reply_parts = []
-    reply_parts.append(f"Here is a comparison of the relevant assessments I found for your request:\n")
+    """Fallback generator for plain-text comparison within 120 words."""
+    if len(candidates) < 2:
+        return "I couldn't find enough assessments to compare."
     
-    header = "| Feature | " + " | ".join(c.get("name", "Unknown") for c in candidates) + " |"
-    divider = "| :--- | " + " | ".join(":---" for _ in candidates) + " |"
-    reply_parts.append(header)
-    reply_parts.append(divider)
+    a, b = candidates[0], candidates[1]
     
-    job_levels_row = "| **Job Levels** | " + " | ".join(", ".join(c.get("job_levels", [])) or "Not Specified" for c in candidates) + " |"
-    reply_parts.append(job_levels_row)
+    a_name = a.get("name", "Assessment A")
+    b_name = b.get("name", "Assessment B")
     
-    duration_row = "| **Duration** | " + " | ".join(c.get("duration") or "Not Specified" for c in candidates) + " |"
-    reply_parts.append(duration_row)
+    a_keys = ", ".join(a.get("keys", [])) or "general assessment"
+    b_keys = ", ".join(b.get("keys", [])) or "general assessment"
     
-    adaptive_row = "| **Adaptive** | " + " | ".join(("Yes" if c.get("adaptive") == "yes" else "No") for c in candidates) + " |"
-    reply_parts.append(adaptive_row)
+    a_duration = a.get("duration") or "unspecified duration"
+    b_duration = b.get("duration") or "unspecified duration"
     
-    keys_row = "| **Key Focus Areas** | " + " | ".join(", ".join(c.get("keys", [])) or "Not Specified" for c in candidates) + " |"
-    reply_parts.append(keys_row)
+    a_levels = ", ".join(a.get("job_levels", [])) or "various levels"
+    b_levels = ", ".join(b.get("job_levels", [])) or "various levels"
     
-    short_descriptions = []
-    for c in candidates:
-        desc = c.get("description", "No description available.")
-        first_sentence = desc.split(". ")[0]
-        if not first_sentence.endswith("."):
-            first_sentence += "."
-        if len(first_sentence) > 150:
-            first_sentence = first_sentence[:147] + "..."
-        short_descriptions.append(first_sentence)
+    a_desc = a.get("description", "")
+    b_desc = b.get("description", "")
+    
+    a_summary = a_desc.split(". ")[0] + "." if a_desc else "No description available."
+    b_summary = b_desc.split(". ")[0] + "." if b_desc else "No description available."
+    
+    reply = (
+        f"{a_name} and {b_name} serve different purposes. "
+        f"{a_name} focuses on {a_keys} for {a_levels} roles with a duration of {a_duration}, "
+        f"assessing {a_summary} "
+        f"{b_name} focuses on {b_keys} for {b_levels} roles with a duration of {b_duration}, "
+        f"assessing {b_summary}"
+    )
+    
+    # Trim to 120 words if needed
+    words = reply.split()
+    if len(words) > 120:
+        reply = " ".join(words[:119]) + "."
         
-    description_row = "| **Description** | " + " | ".join(short_descriptions) + " |"
-    reply_parts.append(description_row)
-    
-    return "\n".join(reply_parts)
+    return reply
 
 def compare_assessments(query: str) -> dict:
     """
@@ -159,7 +183,7 @@ def compare_assessments(query: str) -> dict:
     try:
         reply_text = llm_compare(assessment_a, assessment_b)
     except Exception:
-        # Fallback to static table
+        # Fallback to static plain-text comparison
         reply_text = generate_static_comparison([assessment_a, assessment_b])
         
     return {

@@ -3,10 +3,11 @@ import json
 import requests
 from app.config import CATALOG_PATH, GEMINI_API_KEY
 from app.intent import detect_intent
+from app.parser import extract_assessment_preferences
 from app.retriever import search
 from app.guardrails import should_refuse, get_refusal_response
 from app.clarifier import needs_clarification, get_clarification_response
-from app.comparison import compare_assessments
+from app.comparison import compare_assessments, sanitize_reply
 
 # Load valid catalog names and URLs
 try:
@@ -35,33 +36,39 @@ def get_assessment_category(item: dict) -> str:
     return "other"
 
 def generate_static_reply(parsed_entities: dict, recommendations: list, is_refinement: bool, messages: list) -> str:
-    """Fallback generator for static conversational replies."""
+    """Fallback generator for conversational, grounded replies."""
     role = parsed_entities.get("role") or (", ".join(parsed_entities.get("skills", [])) if parsed_entities.get("skills") else "")
     exp = parsed_entities.get("experience")
+    assessment_pref = parsed_entities.get("assessment_pref", [])
     
-    role_str = f"a {role}" if role else "your target role"
-    exp_str = f" ({exp} years experience)" if exp else ""
+    # Build natural fragments
+    role_str = role if role else "your target role"
+    exp_part = f"approximately {exp} years of experience" if exp else "your experience level"
     
-    # Check if there are specific preference keywords in user history
-    history_text = " ".join(msg["content"].lower() for msg in messages if msg["role"] == "user")
-    pref_types = []
-    if any(w in history_text for w in ["personality", "behavior", "situational", "opq"]):
-        pref_types.append("personality")
-    if any(w in history_text for w in ["coding", "programming", "technical", "test code"]):
-        pref_types.append("technical/coding")
-    if any(w in history_text for w in ["cognitive", "aptitude", "ability", "reasoning", "logic"]):
-        pref_types.append("cognitive")
-        
-    pref_str = " and ".join(pref_types)
+    # Build preference description
+    pref_map = {
+        "coding": "coding and programming",
+        "personality": "personality and behavioral",
+        "cognitive": "cognitive and reasoning"
+    }
+    pref_labels = [pref_map.get(p, p) for p in assessment_pref]
+    pref_str = " and ".join(pref_labels) if pref_labels else ""
+    
+    count = len(recommendations)
     
     if is_refinement:
         if pref_str:
-            return f"I've updated the shortlist to include {pref_str}-focused assessments for {role_str}{exp_str}."
-        return f"Based on your updated preferences, I have refined the shortlist of assessments for {role_str}{exp_str}."
+            return (f"Got it. I've refined the shortlist to focus on {pref_str} assessments, "
+                    f"tailored for a {role_str} role with {exp_part}. "
+                    f"Here are {count} updated recommendations.")
+        return (f"Based on your updated preferences, here are {count} refined SHL assessments "
+              f"suitable for a {role_str} with {exp_part}.")
     else:
         if pref_str:
-            return f"Here are the {pref_str} assessments selected for {role_str}{exp_str}."
-        return f"I have selected {len(recommendations)} relevant assessments matching your requirements for {role_str}{exp_str}."
+            return (f"Got it. Based on your preference for {pref_str} assessments and {exp_part}, "
+                    f"here are {count} SHL assessments suitable for evaluating {role_str} skills.")
+        return (f"Based on your requirements for a {role_str} with {exp_part}, "
+                f"here are {count} SHL assessments I'd recommend.")
 
 def llm_generate_reply(messages: List[Dict[str, str]], parsed_entities: dict, recommendations: list, is_refinement: bool) -> str:
     """Call Google Gemini API to write a dynamic conversational introduction reply."""
@@ -74,21 +81,39 @@ def llm_generate_reply(messages: List[Dict[str, str]], parsed_entities: dict, re
     role = parsed_entities.get("role") or (", ".join(parsed_entities.get("skills", [])) if parsed_entities.get("skills") else "")
     exp = parsed_entities.get("experience")
     
-    prompt = f"""
-You are an SHL Assessment Assistant. The user wants to recommend assessments.
-We have selected the following assessments from the catalog:
-{[r['name'] for r in recommendations]}
+    # Derive assessment preference labels from parsed_entities
+    assessment_pref = parsed_entities.get("assessment_pref", [])
+    pref_map = {
+        "coding": "coding and programming",
+        "personality": "personality and behavioral",
+        "cognitive": "cognitive and reasoning"
+    }
+    pref_labels = [pref_map.get(p, p) for p in assessment_pref]
+    pref_str = " and ".join(pref_labels) if pref_labels else "general"
+    
+    prompt = f"""You are an SHL Assessment Recommendation Assistant helping HR professionals find the right assessments.
 
-The user's parameters:
-Target Role/Domain: {role}
-Seniority/Experience: {exp}
+Context:
+- Target Role/Domain: {role or 'not specified'}
+- Seniority/Experience: {exp or 'not specified'} years
+- Assessment Preference: {pref_str}
+- Number of assessments selected: {len(recommendations)}
+- Assessment names: {[r['name'] for r in recommendations]}
+- Is this a refinement of previous results: {is_refinement}
 
-Conversation history for context:
-{json.dumps(messages[-3:] if len(messages) >= 3 else messages, indent=2)}
+Recent conversation:
+{json.dumps(messages[-4:] if len(messages) >= 4 else messages, indent=2)}
 
-Please write a brief, 1-2 sentence conversational introduction presenting these assessments to the user.
-If this is a refinement (is_refinement = {is_refinement}), acknowledge the update (e.g. "I've updated the shortlist to include..." or "Based on your updated preferences, these assessments...").
-Do not repeat the list of assessments or include markdown links/bullet points. Keep it natural, human, and professional.
+Write a brief, natural 1-2 sentence introduction to present these assessment recommendations.
+
+Rules:
+- Be conversational and warm (e.g. "Got it.", "Great.", "Based on your preferences...")
+- Reference the user's specific role, experience level, and assessment type preference naturally
+- If this is a refinement, acknowledge the update (e.g. "I've refined the shortlist...")
+- Do NOT list the assessment names in the introduction
+- Do NOT use markdown, bullet points, or numbered lists
+- Keep it professional but human — like a helpful consultant, not a template
+- End with a natural lead-in to the list (e.g. "here are five SHL assessments..." or "I'd recommend these assessments...")
 """
 
     payload = {
@@ -98,7 +123,8 @@ Do not repeat the list of assessments or include markdown links/bullet points. K
     response = requests.post(url, headers=headers, json=payload, timeout=10)
     response.raise_for_status()
     data = response.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    raw = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+    return sanitize_reply(raw)
 
 def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """
@@ -127,10 +153,12 @@ def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     intent_type = intent_res.intent
     
     entities_res = detect_intent(combined_user_content)
+    assessment_pref = extract_assessment_preferences(combined_user_content)
     parsed_entities = {
         "role": entities_res.role,
         "skills": entities_res.skills,
-        "experience": entities_res.experience
+        "experience": entities_res.experience,
+        "assessment_pref": assessment_pref
     }
     
     # 3. Router
@@ -141,9 +169,14 @@ def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         return compare_assessments(last_message)
         
     elif intent_type == "clarify":
-        return get_clarification_response(last_message, parsed_entities)
+        # Even though the last message is short/vague, check if the accumulated
+        # state from conversation history has enough info to recommend
+        if needs_clarification(last_message, parsed_entities):
+            return get_clarification_response(last_message, parsed_entities)
+        # All info present from history — treat as a recommend
+        intent_type = "recommend"
         
-    elif intent_type in ["recommend", "refine"]:
+    if intent_type in ["recommend", "refine"]:
         # Check if the query is vague/missing info, needing clarification
         if needs_clarification(last_message, parsed_entities):
             return get_clarification_response(last_message, parsed_entities)
@@ -201,9 +234,16 @@ def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
         except Exception:
             reply = generate_static_reply(parsed_entities, final_recs, is_refinement, messages)
             
+        # Final output validation to guarantee only valid catalog names are returned
+        valid_recs = [
+            r for r in final_recs
+            if r["name"] in catalog_names and 
+            r["url"] in catalog_urls
+        ]
+        
         return {
             "reply": reply,
-            "recommendations": final_recs,
+            "recommendations": valid_recs,
             "end_of_conversation": False
         }
         

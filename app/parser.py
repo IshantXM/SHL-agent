@@ -234,6 +234,36 @@ def extract_role(text):
     return None
 
 
+def extract_assessment_preferences(text):
+    """Extract assessment type preferences (coding, personality, cognitive) from text."""
+    text = text.lower()
+    prefs = set()
+
+    coding_words = [
+        "coding", "code", "programming", "developer", "technical",
+        "software", "coding assessment", "technical assessment"
+    ]
+    personality_words = [
+        "personality", "behavioral", "behavior", "situational", "opq"
+    ]
+    cognitive_words = [
+        "cognitive", "reasoning", "aptitude", "ability", "gsa",
+        "logic", "logical"
+    ]
+
+    for w in coding_words:
+        if w in text:
+            prefs.add("coding")
+    for w in personality_words:
+        if w in text:
+            prefs.add("personality")
+    for w in cognitive_words:
+        if w in text:
+            prefs.add("cognitive")
+
+    return list(prefs)
+
+
 def parse_query(text):
 
     return {
@@ -248,6 +278,10 @@ def parse_query(text):
 
         "experience":
 
-            extract_experience(text)
+            extract_experience(text),
+
+        "assessment_pref":
+
+            extract_assessment_preferences(text)
 
     }

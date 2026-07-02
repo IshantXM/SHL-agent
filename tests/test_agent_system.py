@@ -39,17 +39,17 @@ def test_clarifier():
     
     # Valid query (contains role, skills, experience, and a test type)
     assert needs_clarification("Java developer with 5 years experience cognitive and coding", {
-        "role": "Java Developer", "skills": ["Java"], "experience": 5
+        "role": "Java Developer", "skills": ["Java"], "experience": 5, "assessment_pref": ["cognitive", "coding"]
     }) == False
     
     # Dynamic replies checking missing fields
-    res1 = get_clarification_response("I need an assessment", {"role": None, "skills": [], "experience": None})
+    res1 = get_clarification_response("I need an assessment", {"role": None, "skills": [], "experience": None, "assessment_pref": []})
     assert "job role" in res1["reply"]
     
-    res2 = get_clarification_response("Hiring Java developer", {"role": "Java Developer", "skills": ["Java"], "experience": None})
+    res2 = get_clarification_response("Hiring Java developer", {"role": "Java Developer", "skills": ["Java"], "experience": None, "assessment_pref": []})
     assert "seniority level" in res2["reply"]
     
-    res3 = get_clarification_response("Hiring Java developer, 4 years", {"role": "Java Developer", "skills": ["Java"], "experience": 4})
+    res3 = get_clarification_response("Hiring Java developer, 4 years", {"role": "Java Developer", "skills": ["Java"], "experience": 4, "assessment_pref": []})
     assert "Cognitive, Personality, or Coding" in res3["reply"]
     print("  [OK] Clarifier tests passed")
 
@@ -58,7 +58,11 @@ def test_comparison():
     # Check compare response
     res = compare_assessments("compare Java 8 and Python")
     assert len(res["recommendations"]) == 0
-    assert "Feature" in res["reply"]
+    assert len(res["reply"]) > 20, "Comparison reply is too short"
+    # Verify no markdown artifacts
+    assert "|" not in res["reply"], "Comparison reply contains pipe characters"
+    assert "**" not in res["reply"], "Comparison reply contains bold markdown"
+    assert "```" not in res["reply"], "Comparison reply contains code fences"
     print("  [OK] Comparison tests passed")
 
 def test_controller():
@@ -72,7 +76,8 @@ def test_controller():
     # Comparison routing
     history_compare = [{"role": "user", "content": "compare .NET MVC and .NET MVVM"}]
     res_compare = handle_chat(history_compare)
-    assert "Feature" in res_compare["reply"]
+    assert len(res_compare["reply"]) > 20, "Comparison reply is too short"
+    assert "|" not in res_compare["reply"], "Comparison reply contains pipe characters"
     assert len(res_compare["recommendations"]) == 0
     
     # Clarification routing

@@ -141,6 +141,42 @@ TEST_DATA = [
         "should_refuse": True,
         "ground_truth_ids": []
     },
+    {
+        "query": "Best AWS certification", 
+        "expected_intent": "refuse", 
+        "should_refuse": True,
+        "ground_truth_ids": []
+    },
+    {
+        "query": "Top Azure exams", 
+        "expected_intent": "refuse", 
+        "should_refuse": True,
+        "ground_truth_ids": []
+    },
+    {
+        "query": "Recommend Coursera courses", 
+        "expected_intent": "refuse", 
+        "should_refuse": True,
+        "ground_truth_ids": []
+    },
+    {
+        "query": "How to prepare a resume", 
+        "expected_intent": "refuse", 
+        "should_refuse": True,
+        "ground_truth_ids": []
+    },
+    {
+        "query": "Should I learn Kubernetes?", 
+        "expected_intent": "refuse", 
+        "should_refuse": True,
+        "ground_truth_ids": []
+    },
+    {
+        "query": "What salary should I offer?", 
+        "expected_intent": "refuse", 
+        "should_refuse": True,
+        "ground_truth_ids": []
+    },
     
     # Refuse intent (prompt injection)
     {
