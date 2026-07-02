@@ -18,6 +18,22 @@ except Exception:
     catalog_names = set()
     catalog_urls = set()
 
+def get_assessment_category(item: dict) -> str:
+    name_lower = item.get("name", "").lower()
+    keys_lower = [k.lower() for k in item.get("keys", [])]
+    
+    if "coding" in name_lower or "programming" in name_lower or "python" in name_lower or "java" in name_lower or "c++" in name_lower or "knowledge & skills" in keys_lower:
+        return "coding"
+    if "ability & aptitude" in keys_lower or "cognitive" in name_lower or "gsa" in name_lower or "aptitude" in name_lower:
+        return "cognitive"
+    if "personality & behavior" in keys_lower or "biodata & situational judgment" in keys_lower or "opq" in name_lower or "personality" in name_lower:
+        return "personality"
+    if "assessment exercises" in keys_lower or "simulation" in name_lower or "exercise" in name_lower:
+        return "simulation"
+    if "video interviews" in keys_lower or "structured interviews" in keys_lower or "interview" in name_lower:
+        return "interview"
+    return "other"
+
 def generate_static_reply(parsed_entities: dict, recommendations: list, is_refinement: bool, messages: list) -> str:
     """Fallback generator for static conversational replies."""
     role = parsed_entities.get("role") or (", ".join(parsed_entities.get("skills", [])) if parsed_entities.get("skills") else "")
@@ -139,8 +155,8 @@ def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
             if msg["role"] == "user"
         )
         
-        # Search the catalog
-        results = search(context, k=5)
+        # Search the catalog (retrieve 15 candidates to allow category-based diversification)
+        results = search(context, k=15)
         
         recommendations = []
         for item in results:
@@ -156,16 +172,38 @@ def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
             if r["name"] in catalog_names and r["url"] in catalog_urls
         ]
         
+        # Diversify recommendations (ensure unique categories first, then top remaining up to 5)
+        seen_categories = set()
+        final_recs = []
+        
+        # 1. Add unique categories first
+        for r in filtered_recs:
+            orig_item = next((item for item in catalog_data if item.get("name") == r["name"]), None)
+            category = get_assessment_category(orig_item) if orig_item else "other"
+            if category not in seen_categories:
+                final_recs.append(r)
+                seen_categories.add(category)
+            if len(final_recs) == 5:
+                break
+                
+        # 2. Fill to 5 with remaining items if unique count is less than 5
+        if len(final_recs) < 5:
+            for r in filtered_recs:
+                if r not in final_recs:
+                    final_recs.append(r)
+                if len(final_recs) == 5:
+                    break
+        
         # 4. Generate conversational intro
         is_refinement = (intent_type == "refine")
         try:
-            reply = llm_generate_reply(messages, parsed_entities, filtered_recs, is_refinement)
+            reply = llm_generate_reply(messages, parsed_entities, final_recs, is_refinement)
         except Exception:
-            reply = generate_static_reply(parsed_entities, filtered_recs, is_refinement, messages)
+            reply = generate_static_reply(parsed_entities, final_recs, is_refinement, messages)
             
         return {
             "reply": reply,
-            "recommendations": filtered_recs,
+            "recommendations": final_recs,
             "end_of_conversation": False
         }
         

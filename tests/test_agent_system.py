@@ -57,10 +57,8 @@ def test_comparison():
     print("Testing Comparison...")
     # Check compare response
     res = compare_assessments("compare Java 8 and Python")
-    assert len(res["recommendations"]) >= 2
+    assert len(res["recommendations"]) == 0
     assert "Feature" in res["reply"]
-    assert "Job Levels" in res["reply"]
-    assert "compare" in res["recommendations"][0]["test_type"]
     print("  [OK] Comparison tests passed")
 
 def test_controller():
@@ -75,7 +73,7 @@ def test_controller():
     history_compare = [{"role": "user", "content": "compare .NET MVC and .NET MVVM"}]
     res_compare = handle_chat(history_compare)
     assert "Feature" in res_compare["reply"]
-    assert len(res_compare["recommendations"]) >= 2
+    assert len(res_compare["recommendations"]) == 0
     
     # Clarification routing
     history_clarify = [{"role": "user", "content": "recommend"}]

@@ -32,7 +32,7 @@ def llm_compare(assessment_a: dict, assessment_b: dict) -> str:
     headers = {"Content-Type": "application/json"}
     
     prompt = f"""
-Compare the following two SHL assessments:
+Compare the following two SHL assessments ONLY using the supplied catalog data. Do not invent any facts.
 
 Assessment A:
 Name: {assessment_a.get('name')}
@@ -51,8 +51,14 @@ Keys/Categories: {assessment_b.get('keys')}
 Description: {assessment_b.get('description')}
 
 Please provide a side-by-side comparison table in markdown with columns "Feature", "{assessment_a.get('name')}", "{assessment_b.get('name')}".
-Keep the table formatting professional, clean, and complete, using the details provided.
-Add a short, 1-2 sentence concluding recommendation of when to use which. Do not include any introductory conversation.
+Compare these features:
+- Purpose
+- Skills measured
+- Target roles
+- Duration
+- Use cases
+
+Do not include any introductory conversation.
 """
 
     payload = {
@@ -150,11 +156,6 @@ def compare_assessments(query: str) -> dict:
         assessment_b = [item for item in catalog if item.get("entity_id") != assessment_a.get("entity_id")][0]
         
     # 3. Perform comparison
-    recommendations = [
-        {"name": assessment_a.get("name", ""), "url": assessment_a.get("link", ""), "test_type": "compare"},
-        {"name": assessment_b.get("name", ""), "url": assessment_b.get("link", ""), "test_type": "compare"}
-    ]
-    
     try:
         reply_text = llm_compare(assessment_a, assessment_b)
     except Exception:
@@ -163,6 +164,6 @@ def compare_assessments(query: str) -> dict:
         
     return {
         "reply": reply_text,
-        "recommendations": recommendations,
+        "recommendations": [],
         "end_of_conversation": False
     }

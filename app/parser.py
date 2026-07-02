@@ -168,26 +168,30 @@ SENIORITY = [
 
 
 def extract_experience(text):
-
     text = text.lower()
 
-    patterns = [
+    # Seniority keywords mapped to representative years
+    keywords = {
+        "graduate": 1,
+        "intern": 1,
+        "entry-level": 1,
+        "entry": 1,
+        "junior": 2,
+        "mid-level": 4,
+        "mid": 4,
+        "senior": 8,
+        "lead": 10
+    }
 
-        r'(\d+)\s*years?',
+    # 1. Check exact keywords first
+    for k, v in keywords.items():
+        if re.search(r'\b' + re.escape(k) + r'\b', text):
+            return v
 
-        r'(\d+)\s*yrs?',
-
-        r'(\d+)\s*y\b'
-
-    ]
-
-    for pattern in patterns:
-
-        match = re.search(pattern, text)
-
-        if match:
-
-            return int(match.group(1))
+    # 2. Check for numeric patterns like "2+", "5 years", "3 yrs", etc.
+    m = re.search(r'(\d+)\s*(?:\+|years?|yrs?|y\b)?', text)
+    if m:
+        return int(m.group(1))
 
     return None
 

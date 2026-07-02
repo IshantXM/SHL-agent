@@ -67,7 +67,7 @@ def should_refuse(query: str) -> bool:
 def get_refusal_response() -> dict:
     """Get the standard refusal response dictionary."""
     return {
-        "reply": "I can only help with SHL assessment recommendations and comparisons. I cannot provide legal advice, salary information, general hiring advice, or answer non-SHL related questions.",
+        "reply": "I can only discuss SHL assessments. I cannot provide legal advice, salary information, general hiring advice, or answer non-SHL related questions.",
         "recommendations": [],
-        "end_of_conversation": False
+        "end_of_conversation": True
     }

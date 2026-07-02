@@ -38,6 +38,20 @@ TEST_DATA = [
         "ground_truth_ids": ["4107"]  # Kubernetes (New) or similar
     },
     
+    # Refine intent
+    {
+        "query": "Actually include personality assessments", 
+        "expected_intent": "refine", 
+        "should_refuse": False,
+        "ground_truth_ids": ["4302"]
+    },
+    {
+        "query": "Also add a cognitive ability test", 
+        "expected_intent": "refine", 
+        "should_refuse": False,
+        "ground_truth_ids": ["4105"]
+    },
+    
     # Compare intent
     {
         "query": "compare Java 8 vs Core Java", 
@@ -215,6 +229,14 @@ def run_evaluation():
     recall_10_scores = []
     groundedness_scores = []
     
+    # Intent category trackers
+    clarify_total = 0
+    clarify_correct = 0
+    refine_total = 0
+    refine_correct = 0
+    compare_total = 0
+    compare_correct = 0
+    
     retriever = Retriever(k=20)
     
     for item in TEST_DATA:
@@ -243,9 +265,23 @@ def run_evaluation():
         if actual_intent == expected_intent:
             correct_intents += 1
             
+        # Segmented intent checks
+        if expected_intent == "clarify":
+            clarify_total += 1
+            if actual_intent == "clarify":
+                clarify_correct += 1
+        elif expected_intent == "refine":
+            refine_total += 1
+            if actual_intent == "refine":
+                refine_correct += 1
+        elif expected_intent == "compare":
+            compare_total += 1
+            if actual_intent == "compare":
+                compare_correct += 1
+            
         # 3. Retrieve Candidates for Recall
-        # Only evaluate retrieval recall for recommendation or comparison queries
-        if expected_intent in ["recommend", "compare"]:
+        # Only evaluate retrieval recall for recommendation, refinement, or comparison queries
+        if expected_intent in ["recommend", "refine", "compare"]:
             retrieved_candidates = retriever.get_results(query)
             r3 = recall_at_k(retrieved_candidates, gt_ids, k=3)
             r5 = recall_at_k(retrieved_candidates, gt_ids, k=5)
@@ -277,6 +313,10 @@ def run_evaluation():
     mean_g = sum(groundedness_scores) / len(groundedness_scores) if groundedness_scores else 1.0
     h_rate = hallucination_rate(groundedness_scores)
     
+    clarify_rate = clarify_correct / clarify_total if clarify_total > 0 else 1.0
+    refine_rate = refine_correct / refine_total if refine_total > 0 else 1.0
+    compare_rate = compare_correct / compare_total if compare_total > 0 else 1.0
+    
     print("\nRESULTS SUMMARY:")
     print("-" * 50)
     print(f"Total Test Cases:               {total}")
@@ -287,6 +327,9 @@ def run_evaluation():
     print(f"Mean Recall@10 (Retrieval):     {mean_r10 * 100:.2f}%")
     print(f"Mean Groundedness (Response):   {mean_g * 100:.2f}%")
     print(f"Hallucination Rate (Response):  {h_rate * 100:.2f}%")
+    print(f"Clarification Pass Rate:        {clarify_rate * 100:.2f}% ({clarify_correct}/{clarify_total})")
+    print(f"Refinement Pass Rate:           {refine_rate * 100:.2f}% ({refine_correct}/{refine_total})")
+    print(f"Comparison Pass Rate:           {compare_rate * 100:.2f}% ({compare_correct}/{compare_total})")
     print("-" * 50)
     print("All metric evaluations complete!")
     print("=" * 80)
