@@ -7,13 +7,15 @@ from app.guardrails import should_refuse, get_refusal_response
 from app.clarifier import needs_clarification, get_clarification_response
 from app.comparison import compare_assessments
 
-# Load valid catalog names
+# Load valid catalog names and URLs
 try:
     with open(CATALOG_PATH, encoding="utf-8") as f:
         catalog_data = json.load(f)
-    valid_names = {item.get("name") for item in catalog_data if item.get("name")}
+    catalog_names = {item.get("name") for item in catalog_data if item.get("name")}
+    catalog_urls = {item.get("link") for item in catalog_data if item.get("link")}
 except Exception:
-    valid_names = set()
+    catalog_names = set()
+    catalog_urls = set()
 
 def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """
@@ -76,8 +78,11 @@ def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
                 "test_type": "recommend"
             })
             
-        # Filter recommendations to ensure name is in valid_names
-        filtered_recs = [r for r in recommendations if r["name"] in valid_names]
+        # Filter recommendations to ensure name is in catalog_names and url is in catalog_urls
+        filtered_recs = [
+            r for r in recommendations 
+            if r["name"] in catalog_names and r["url"] in catalog_urls
+        ]
             
         return {
             "reply": f"Found {len(filtered_recs)} matching assessments.",
