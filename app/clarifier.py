@@ -13,14 +13,14 @@ def extract_test_types(text: str) -> list[str]:
 def needs_clarification(query: str, parsed_entities: dict) -> bool:
     """
     Determine if more information is required based on the clarification policy:
-    We need clarification if role, seniority/experience, or test type is missing.
+    We need clarification if role/skills, seniority/experience, or test type is missing.
     """
-    role = parsed_entities.get("role")
+    role_present = bool(parsed_entities.get("role") or parsed_entities.get("skills"))
     experience = parsed_entities.get("experience")
     test_types = extract_test_types(query)
     
-    # If any of the three (role, seniority, or test type) is missing, clarify.
-    if not role or not experience or not test_types:
+    # If any of the three (role/skills, seniority, or test type) is missing, clarify.
+    if not role_present or not experience or not test_types:
         return True
         
     return False
@@ -28,14 +28,14 @@ def needs_clarification(query: str, parsed_entities: dict) -> bool:
 def get_clarification_response(query: str, parsed_entities: dict) -> dict:
     """
     Generate dynamic clarification reply following the specific policy:
-    1. If role is missing -> Ask for job role.
-    2. If role is present but seniority is missing -> Ask for seniority.
-    3. If role & seniority are present but test type is missing -> Ask for assessment preferences.
+    1. If role/skills is missing -> Ask for job role.
+    2. If role/skills is present but seniority is missing -> Ask for seniority.
+    3. If role/skills & seniority are present but test type is missing -> Ask for assessment preferences.
     """
-    role = parsed_entities.get("role")
+    role_present = bool(parsed_entities.get("role") or parsed_entities.get("skills"))
     experience = parsed_entities.get("experience")
     
-    if not role:
+    if not role_present:
         reply = "Could you specify the target job role (e.g. Java Developer) for the assessment?"
     elif not experience:
         reply = "What seniority level or years of experience is required for this role?"
