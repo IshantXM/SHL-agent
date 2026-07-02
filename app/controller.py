@@ -1,6 +1,7 @@
 from typing import List, Dict, Any
 import json
-from app.config import CATALOG_PATH
+import requests
+from app.config import CATALOG_PATH, GEMINI_API_KEY
 from app.intent import detect_intent
 from app.retriever import search
 from app.guardrails import should_refuse, get_refusal_response
@@ -16,6 +17,72 @@ try:
 except Exception:
     catalog_names = set()
     catalog_urls = set()
+
+def generate_static_reply(parsed_entities: dict, recommendations: list, is_refinement: bool, messages: list) -> str:
+    """Fallback generator for static conversational replies."""
+    role = parsed_entities.get("role") or (", ".join(parsed_entities.get("skills", [])) if parsed_entities.get("skills") else "")
+    exp = parsed_entities.get("experience")
+    
+    role_str = f"a {role}" if role else "your target role"
+    exp_str = f" ({exp} years experience)" if exp else ""
+    
+    # Check if there are specific preference keywords in user history
+    history_text = " ".join(msg["content"].lower() for msg in messages if msg["role"] == "user")
+    pref_types = []
+    if any(w in history_text for w in ["personality", "behavior", "situational", "opq"]):
+        pref_types.append("personality")
+    if any(w in history_text for w in ["coding", "programming", "technical", "test code"]):
+        pref_types.append("technical/coding")
+    if any(w in history_text for w in ["cognitive", "aptitude", "ability", "reasoning", "logic"]):
+        pref_types.append("cognitive")
+        
+    pref_str = " and ".join(pref_types)
+    
+    if is_refinement:
+        if pref_str:
+            return f"I've updated the shortlist to include {pref_str}-focused assessments for {role_str}{exp_str}."
+        return f"Based on your updated preferences, I have refined the shortlist of assessments for {role_str}{exp_str}."
+    else:
+        if pref_str:
+            return f"Here are the {pref_str} assessments selected for {role_str}{exp_str}."
+        return f"I have selected {len(recommendations)} relevant assessments matching your requirements for {role_str}{exp_str}."
+
+def llm_generate_reply(messages: List[Dict[str, str]], parsed_entities: dict, recommendations: list, is_refinement: bool) -> str:
+    """Call Google Gemini API to write a dynamic conversational introduction reply."""
+    if not GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY not configured")
+        
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    headers = {"Content-Type": "application/json"}
+    
+    role = parsed_entities.get("role") or (", ".join(parsed_entities.get("skills", [])) if parsed_entities.get("skills") else "")
+    exp = parsed_entities.get("experience")
+    
+    prompt = f"""
+You are an SHL Assessment Assistant. The user wants to recommend assessments.
+We have selected the following assessments from the catalog:
+{[r['name'] for r in recommendations]}
+
+The user's parameters:
+Target Role/Domain: {role}
+Seniority/Experience: {exp}
+
+Conversation history for context:
+{json.dumps(messages[-3:] if len(messages) >= 3 else messages, indent=2)}
+
+Please write a brief, 1-2 sentence conversational introduction presenting these assessments to the user.
+If this is a refinement (is_refinement = {is_refinement}), acknowledge the update (e.g. "I've updated the shortlist to include..." or "Based on your updated preferences, these assessments...").
+Do not repeat the list of assessments or include markdown links/bullet points. Keep it natural, human, and professional.
+"""
+
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}]
+    }
+    
+    response = requests.post(url, headers=headers, json=payload, timeout=10)
+    response.raise_for_status()
+    data = response.json()
+    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
 def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
     """
@@ -88,9 +155,16 @@ def handle_chat(messages: List[Dict[str, str]]) -> Dict[str, Any]:
             r for r in recommendations 
             if r["name"] in catalog_names and r["url"] in catalog_urls
         ]
+        
+        # 4. Generate conversational intro
+        is_refinement = (intent_type == "refine")
+        try:
+            reply = llm_generate_reply(messages, parsed_entities, filtered_recs, is_refinement)
+        except Exception:
+            reply = generate_static_reply(parsed_entities, filtered_recs, is_refinement, messages)
             
         return {
-            "reply": f"Found {len(filtered_recs)} matching assessments.",
+            "reply": reply,
             "recommendations": filtered_recs,
             "end_of_conversation": False
         }

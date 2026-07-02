@@ -86,7 +86,7 @@ def test_controller():
     # Recommendation routing
     history_recommend = [{"role": "user", "content": "Hiring Java developer with 4 years experience for coding assessments"}]
     res_recommend = handle_chat(history_recommend)
-    assert "Found" in res_recommend["reply"]
+    assert "assessments" in res_recommend["reply"]
     assert len(res_recommend["recommendations"]) > 0
     print("  [OK] Controller tests passed")
 
