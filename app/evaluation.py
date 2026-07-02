@@ -212,9 +212,10 @@ def run_evaluation():
     # Evaluation metric lists
     recall_3_scores = []
     recall_5_scores = []
+    recall_10_scores = []
     groundedness_scores = []
     
-    retriever = Retriever(k=5)
+    retriever = Retriever(k=20)
     
     for item in TEST_DATA:
         query = item["query"]
@@ -248,8 +249,10 @@ def run_evaluation():
             retrieved_candidates = retriever.get_results(query)
             r3 = recall_at_k(retrieved_candidates, gt_ids, k=3)
             r5 = recall_at_k(retrieved_candidates, gt_ids, k=5)
+            r10 = recall_at_k(retrieved_candidates, gt_ids, k=10)
             recall_3_scores.append(r3)
             recall_5_scores.append(r5)
+            recall_10_scores.append(r10)
             
         # 4. Generate response and check groundedness
         chat_history = [{"role": "user", "content": query}]
@@ -270,6 +273,7 @@ def run_evaluation():
     
     mean_r3 = mean_recall(recall_3_scores)
     mean_r5 = mean_recall(recall_5_scores)
+    mean_r10 = mean_recall(recall_10_scores)
     mean_g = sum(groundedness_scores) / len(groundedness_scores) if groundedness_scores else 1.0
     h_rate = hallucination_rate(groundedness_scores)
     
@@ -280,6 +284,7 @@ def run_evaluation():
     print(f"Guardrail F1-Score:             {f1 * 100:.2f}%")
     print(f"Mean Recall@3 (Retrieval):      {mean_r3 * 100:.2f}%")
     print(f"Mean Recall@5 (Retrieval):      {mean_r5 * 100:.2f}%")
+    print(f"Mean Recall@10 (Retrieval):     {mean_r10 * 100:.2f}%")
     print(f"Mean Groundedness (Response):   {mean_g * 100:.2f}%")
     print(f"Hallucination Rate (Response):  {h_rate * 100:.2f}%")
     print("-" * 50)
